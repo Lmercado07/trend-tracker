@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Trend Radar</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#eef1f5;--surf:#fff;--ink:#14213d;--mut:#5b6678;--line:#d5dbe4;--social:#6d4aff;--search:#0a8f6a;--news:#e8590c;--sel:#e4e9f5;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1626;--surf:#172036;--ink:#e8edf7;--mut:#9aa6bb;--line:#2a3652;--social:#9b86ff;--search:#3ccf9f;--news:#ff8a4c;--sel:#22304f;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 "Instrument Sans",system-ui,sans-serif}
+.wrap{max-width:1080px;margin:0 auto;padding:20px 16px 40px}
+h1,h2,.num{font-family:"Bricolage Grotesque","Instrument Sans",system-ui,sans-serif}
+h1{font-size:28px;margin:0 0 2px}
+.sub{color:var(--mut);margin:0 0 14px;max-width:64ch}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px}
+.chip{font:inherit;border:1px solid var(--line);background:var(--surf);color:var(--ink);border-radius:999px;padding:5px 13px;cursor:pointer}
+.chip[aria-pressed=true]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.upd{margin-left:auto;color:var(--mut);font-size:13px}
+:focus-visible{outline:2px solid var(--social);outline-offset:2px}
+.grid{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:14px;align-items:start}
+@media(max-width:760px){.grid{grid-template-columns:1fr}}
+.list,.detail{background:var(--surf);border:1px solid var(--line);border-radius:10px}
+.list{overflow:hidden}
+.row{display:grid;grid-template-columns:44px 1fr;gap:10px;width:100%;text-align:left;font:inherit;color:inherit;background:none;border:0;border-bottom:1px solid var(--line);padding:11px 12px;cursor:pointer}
+.row:last-child{border-bottom:0}
+.row[aria-current=true]{background:var(--sel)}
+.num{font-size:24px;font-weight:700;line-height:1.1}
+.nm{font-weight:600}
+.meta{color:var(--mut);font-size:13px}
+.dots{display:inline-flex;gap:3px;margin-right:6px;vertical-align:middle}
+.dots i{width:8px;height:8px;border-radius:50%;background:var(--line)}
+.dots i.on.social{background:var(--social)}.dots i.on.search{background:var(--search)}.dots i.on.news{background:var(--news)}
+.detail{padding:16px}
+.detail h2{font-size:22px;margin:0 0 2px}
+.lane{margin:14px 0 0}
+.lane .hd{display:flex;justify-content:space-between;gap:8px;font-size:13px;margin-bottom:2px}
+.lane svg{width:100%;height:58px;display:block}
+.callout{margin:16px 0 0;padding:10px 12px;border-left:3px solid var(--news);background:var(--bg);border-radius:0 6px 6px 0}
+.hl{margin:12px 0 0;padding:0;list-style:none;font-size:14px}
+.hl li{padding:5px 0;border-top:1px solid var(--line)}
+.msg{padding:16px;color:var(--mut)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Trend Radar</h1>
+<p class="sub">US trending topics ranked by how fast social chatter, search interest and news coverage are rising together.</p>
+<div class="bar" id="bar"></div>
+<div class="grid"><div class="list" id="list"></div><div class="detail" id="detail"></div></div>
+</div>
+<script>
+const SRC=[{k:'social',n:'Social chatter (Bluesky)'},{k:'search',n:'Search interest (Google Trends)'},{k:'news',n:'News coverage'}];
+let D=null,stage='All',sel=null;
+const col=k=>`var(--${k})`;
+const hm=s=>s?new Date(s).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'';
+async function load(){
+ try{const r=await fetch('data/latest.json?'+Date.now());if(!r.ok)throw 0;D=await r.json()}
+ catch(e){document.getElementById('list').innerHTML='<p class="msg">No data yet. The first collection run has not finished. Check the Actions tab in your repository, then reload.</p>';document.getElementById('detail').innerHTML='';return}
+ render()}
+function dots(r){return`<span class="dots">${SRC.map(s=>`<i class="${s.k}${r.sig[s.k]>25?' on':''}"></i>`).join('')}</span>`}
+function spark(a,k,on){const w=300,h=58,n=a.length,mx=Math.max(...a),mn=Math.min(...a),X=i=>i/Math.max(1,n-1)*w,Y=v=>h-4-(v-mn)/(mx-mn||1)*(h-10);
+const p=a.map((v,i)=>(i?'L':'M')+X(i).toFixed(1)+' '+Y(v).toFixed(1)).join('');
+const m=on!=null?`<line x1="${X(on)}" x2="${X(on)}" y1="0" y2="${h}" stroke="${col(k)}" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>`:'';
+return`<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="Recent trend">${m}<path d="${p}L${w} ${h}L0 ${h}Z" fill="${col(k)}" opacity=".12"/><path d="${p}" fill="none" stroke="${col(k)}" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>`}
+function render(){
+ const stages=['All','Breaking','Building','Early signal','Watching'];
+ document.getElementById('bar').innerHTML=stages.map(s=>`<button class="chip" aria-pressed="${stage===s}" data-s="${s}">${s}</button>`).join('')+`<span class="upd">Updated ${hm(D.updated)} · ${D.snapshots} readings · refreshes every minute</span>`;
+ const rows=D.topics.filter(r=>stage==='All'||r.stage===stage);
+ if(!rows.find(r=>r.name===sel)&&rows.length)sel=rows[0].name;
+ document.getElementById('list').innerHTML=rows.length?rows.map(r=>`<button class="row" data-n="${encodeURIComponent(r.name)}" aria-current="${r.name===sel}"><span class="num">${r.score}</span><span><span class="nm">${r.name}</span><br><span class="meta">${dots(r)}${r.stage}</span></span></button>`).join(''):'<p class="msg">No topics in this stage. Pick another filter.</p>';
+ const r=D.topics.find(x=>x.name===sel);
+ if(!r){document.getElementById('detail').innerHTML='';return}
+ let co;
+ if(r.stage==='Collecting data')co='Still collecting readings for this topic. Scores appear after about an hour.';
+ else if(r.lead_min!=null&&r.lead_min>0)co=`Social chatter rose <b>${r.lead_min} minutes</b> before news coverage did. Topics with this pattern are worth watching early.`;
+ else if(r.stage==='Watching')co='No source is rising faster than its baseline. Nothing to act on yet.';
+ else if(r.sig.news>25)co='News is already covering this alongside other signals.';
+ else co='News has not picked this up yet.';
+ document.getElementById('detail').innerHTML=`<h2>${r.name}</h2><div class="meta">${r.stage} · score ${r.score} of 100</div>`+
+ SRC.map(s=>`<div class="lane"><div class="hd"><span style="color:${col(s.k)};font-weight:600">${s.n}</span><span class="meta">${r.onset[s.k]!=null?'rising since '+hm(r.onset_ts[s.k]):'flat'} · signal ${r.sig[s.k]}</span></div>${spark(r.series[s.k],s.k,r.onset[s.k])}</div>`).join('')+
+ `<p class="callout">${co}</p><ul class="hl">${r.headlines.map(h=>`<li>${h}</li>`).join('')}</ul>`}
+document.addEventListener('click',e=>{const c=e.target.closest('[data-s]'),w=e.target.closest('[data-n]');
+ if(c){stage=c.dataset.s;render()}else if(w){sel=decodeURIComponent(w.dataset.n);render()}});
+load();setInterval(load,60000);
+</script>
+</body>
+</html>
