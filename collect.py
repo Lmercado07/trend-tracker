@@ -8,10 +8,22 @@ NEWS_FEEDS = [
     "https://feeds.npr.org/1001/rss.xml",
     "https://feeds.bbci.co.uk/news/world/rss.xml",
     "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml",
+    "https://rss.nytimes.com/services/xml/rss/nyt/US.xml",
     "https://www.theguardian.com/us-news/rss",
     "https://abcnews.go.com/abcnews/topstories",
     "https://www.cbsnews.com/latest/rss/main",
     "https://feeds.foxnews.com/foxnews/latest",
+    "https://feeds.nbcnews.com/nbcnews/public/news",
+    "https://rssfeeds.usatoday.com/usatoday-NewsTopStories",
+    "https://rss.politico.com/politics-news.xml",
+    "https://thehill.com/feed/",
+    "https://www.aljazeera.com/xml/rss/all.xml",
+    "https://www.pbs.org/newshour/feeds/rss/headlines",
+    "https://feeds.a.dj.com/rss/RSSWorldNews.xml",
+    "https://www.latimes.com/world-nation/rss2.0.xml",
+    "https://feeds.skynews.com/feeds/rss/world.xml",
+    "https://www.cnbc.com/id/100003114/device/rss/rss.html",
+    "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en",
 ]
 MAX_TOPICS, MAX_FOUND, KEEP, SERIES, WIN = 25, 10, 288, 144, 30
 MIN_SOCIAL, MIN_NEWS = 5, 2   # ignore tiny counts, they are noise
@@ -23,7 +35,7 @@ STOP = {"fox news", "new york", "new york times", "associated press", "live upda
         "white house", "united states", "washington post", "bbc news", "cbs news", "abc news"}
 CAP = re.compile(r"\b[A-Z][\w'’\-]+(?:\s+[A-Z][\w'’\-]+){1,2}\b")
 now = dt.datetime.now(dt.timezone.utc)
-health, fails = {}, 0
+health, meta, fails, gfails, gok = {}, {}, 0, 0, 0
 
 
 def get(url, tries=2, headers=None, **kw):
@@ -80,6 +92,7 @@ def read_news():
         ok += 1
         items += [{"o": oi, "title": t, "text": (t + " " + d).lower()} for t, d in found]
     health["news_feeds"] = ok >= len(NEWS_FEEDS) // 2
+    meta["feeds_ok"], meta["feeds_total"] = ok, len(NEWS_FEEDS)
     return items
 
 
@@ -174,6 +187,36 @@ def social(name, token):
     return counts, samples
 
 
+def gnews(name):
+    """Stories in the last 1h and 6h from ALL outlets Google News indexes. Returns (n1h, n6h, outlets)."""
+    global gfails, gok
+    if gfails >= 3:
+        return None
+    q = f'"{name}"' if " " in name else name
+    got = []
+    for span in ("1h", "6h"):
+        r = get("https://news.google.com/rss/search", tries=1,
+                params={"q": f"{q} when:{span}", "hl": "en-US", "gl": "US", "ceid": "US:en"})
+        try:
+            got.append([(i.findtext("source") or "").strip() for i in ET.fromstring(r.content).iter("item")])
+        except Exception:
+            gfails += 1
+            return None
+        time.sleep(.1)
+    gfails, gok = 0, gok + 1
+    return len(got[0]), len(got[1]), len({x for x in got[1] if x})
+
+
+def mastodon_items():
+    """Links people are sharing on Mastodon right now. Used to discover topics."""
+    r = get("https://mastodon.social/api/v1/trends/links", tries=1, params={"limit": 20})
+    try:
+        return [{"o": "m:" + (x.get("url", "").split("/")[2] if "//" in x.get("url", "") else str(i)),
+                 "title": x.get("title", ""), "text": x.get("title", "").lower()} for i, x in enumerate(r.json())]
+    except Exception:
+        return []
+
+
 def mean(a):
     return sum(a) / len(a) if a else 0
 
@@ -187,7 +230,7 @@ def ffill(a):
     return out
 
 
-def analyze(c, hist, live, samples, outlets):
+def analyze(c, hist, live, samples, outlets, gl=None):
     name, n = c["name"], len(hist)
     cols = {k: [h["t"].get(name, [None, 0, 0])[i] for h in hist] for i, k in enumerate(ORDER)}
     sers = {k: ffill(a) for k, a in cols.items()}
@@ -200,13 +243,15 @@ def analyze(c, hist, live, samples, outlets):
             s *= .5                      # a single noisy reading counts for less
         if (k == "social" and recent < MIN_SOCIAL) or (k == "news" and recent < MIN_NEWS):
             s = 0
+        if k == "news" and gl and gl[0] >= MIN_NEWS:
+            s = max(s, math.log2((gl[0] + 1) / ((gl[1] - gl[0]) / 5 + 1)) / 3 * 100)
         if k == "social" and live and live[0] >= MIN_SOCIAL:
             s = max(s, math.log2((live[0] + 1) / ((live[1] + live[2]) / 2 + 1)) / 3 * 100)
         sig[k] = max(0, min(100, s))
         onset[k] = next((i for i in range(base_len, n - 2) if mean(a[i:i + 3]) > 1.5 * (base + 1)), None)
     active = sum(v > 25 for v in sig.values())
     score = round(min(100, sum(WEIGHTS[k] * sig[k] for k in sig) * (1 + .25 * max(0, active - 1))))
-    vol_ok = bool(live and live[0] >= 15) or outlets >= 3
+    vol_ok = bool(live and live[0] >= 15) or outlets >= 3 or bool(gl and gl[0] >= 5)
     conf = "High" if active >= 2 and vol_ok else "Medium" if active >= 1 and (vol_ok or (live and live[0] >= MIN_SOCIAL)) else "Low"
     if conf == "Low":
         score = round(score * .6)
@@ -226,6 +271,8 @@ def analyze(c, hist, live, samples, outlets):
     if live and live[0] >= MIN_SOCIAL:
         why.append(f"{live[0]} Bluesky posts in the last {WIN} min vs {(live[1] + live[2]) / 2:g} per {WIN} min before"
                    + (" (hit the 100-post cap)" if live[0] >= 100 else ""))
+    if gl and gl[0] >= MIN_NEWS:
+        why.append(f"{gl[0]} news stories in the last hour vs about {(gl[1] - gl[0]) / 5:.1f} per hour over the 5 hours before")
     if outlets:
         why.append(f"Covered by {outlets} outlet{'s' if outlets != 1 else ''} in the tracked feeds right now")
     elif sig["social"] > 25:
@@ -255,7 +302,7 @@ def main():
                   for n in (history[-1]["t"] if history else {})][:MAX_TOPICS]
     if not trends and not items:
         raise SystemExit("Nothing fetched; leaving data unchanged.")
-    found = discover(items, [t["name"] for t in trends])
+    found = discover(items + mastodon_items(), [t["name"] for t in trends])
     known = [t["name"].lower() for t in trends + found]
     for nm in bsky_trending():
         if nm and len(found) < MAX_FOUND + 5 and not any(nm.lower() in k or k in nm.lower() for k in known):
@@ -266,15 +313,17 @@ def main():
     for c in trends + found:
         live, samples = social(c["name"], token)
         nn, outlets = news_stats(c["name"], items)
+        gl = gnews(c["name"])
         snap[c["name"]] = [live[0] if live else None, c["search"], nn + len(c["heads"])]
-        aux[c["name"]] = (live, samples, outlets)
+        aux[c["name"]] = (live, samples, max(outlets, gl[2] if gl else 0), gl)
     health["bluesky"] = token is not None and fails < 3
+    health["google_news"] = gok > 0
     os.makedirs("data", exist_ok=True)
     history = (history + [{"v": 2, "ts": now.isoformat(), "t": snap}])[-KEEP:]
     json.dump(history, open("data/history.json", "w"), separators=(",", ":"))
     recent = history[-SERIES:]
     rows = sorted((analyze(c, recent, *aux[c["name"]]) for c in trends + found), key=lambda r: -r["score"])
-    json.dump({"updated": now.isoformat(), "snapshots": len(history), "health": health, "topics": rows},
+    json.dump({"updated": now.isoformat(), "snapshots": len(history), "health": health, "meta": meta, "topics": rows},
               open("data/latest.json", "w"), separators=(",", ":"))
     print(f"Saved {len(rows)} topics ({len(found)} discovered), {len(history)} snapshots. Health: {health}")
 
