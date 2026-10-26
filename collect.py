@@ -116,14 +116,26 @@ def bsky_trending():
 
 
 def bsky_login():
-    h, p = os.getenv("BSKY_HANDLE"), os.getenv("BSKY_APP_PASSWORD")
+    h, p = os.getenv("BSKY_HANDLE", ""), os.getenv("BSKY_APP_PASSWORD", "")
+    raw_h, raw_p = h, p
+    h, p = h.strip().lstrip("@").lower(), p.strip()
+    ok_pw = bool(re.fullmatch(r"[a-z0-9]{4}(-[a-z0-9]{4}){3}", p))
+    print(f"[bluesky check] handle: {len(h)} chars, has a dot: {'.' in h}, has @ or space: {raw_h != h}, "
+          f"is an email: {'@' in h}")
+    print(f"[bluesky check] password: {len(p)} chars (app passwords are 19), right format: {ok_pw}, "
+          f"had stray spaces: {raw_p != p}")
     if not (h and p):
-        print("No Bluesky login set.")
+        print("[bluesky check] A secret is EMPTY. Check the secret names are exactly BSKY_HANDLE and BSKY_APP_PASSWORD.")
         return None
+    if "@" in h:
+        print("[bluesky check] Use your handle (name.bsky.social), not your email.")
+    if not ok_pw:
+        print("[bluesky check] This does not look like an app password. Make a new one in Bluesky settings.")
     r = requests.post(BSKY + "com.atproto.server.createSession", json={"identifier": h, "password": p}, timeout=20)
     if not r.ok:
-        print("Bluesky login failed:", r.text)
+        print("Bluesky login failed:", r.status_code, r.text)
         return None
+    print("[bluesky check] Login worked.")
     return r.json()["accessJwt"]
 
 
