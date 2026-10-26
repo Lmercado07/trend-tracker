@@ -41,6 +41,10 @@ h1{font-size:28px;margin:0 0 2px}
 .hl{margin:12px 0 0;padding:0;list-style:none;font-size:14px}
 .hl li{padding:5px 0;border-top:1px solid var(--line)}
 .msg{padding:16px;color:var(--mut)}
+.sec{font:600 13px/1.4 "Instrument Sans",system-ui,sans-serif;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);margin:18px 0 4px}
+.why{margin:0;padding-left:18px;font-size:14px}
+.warn{color:var(--news);font-weight:600;font-size:13px;width:100%}
+a{color:var(--social)}
 </style>
 </head>
 <body>
@@ -53,6 +57,7 @@ h1{font-size:28px;margin:0 0 2px}
 <script>
 const SRC=[{k:'social',n:'Social chatter (Bluesky)'},{k:'search',n:'Search interest (Google Trends)'},{k:'news',n:'News coverage'}];
 let D=null,stage='All',sel=null;
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const col=k=>`var(--${k})`;
 const hm=s=>s?new Date(s).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'';
 async function load(){
@@ -66,10 +71,10 @@ const m=on!=null?`<line x1="${X(on)}" x2="${X(on)}" y1="0" y2="${h}" stroke="${c
 return`<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="Recent trend">${m}<path d="${p}L${w} ${h}L0 ${h}Z" fill="${col(k)}" opacity=".12"/><path d="${p}" fill="none" stroke="${col(k)}" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>`}
 function render(){
  const stages=['All','Breaking','Building','Early signal','Watching'];
- document.getElementById('bar').innerHTML=stages.map(s=>`<button class="chip" aria-pressed="${stage===s}" data-s="${s}">${s}</button>`).join('')+`<span class="upd">Updated ${hm(D.updated)} · ${D.snapshots} readings · refreshes every minute</span>`;
+ document.getElementById('bar').innerHTML=stages.map(s=>`<button class="chip" aria-pressed="${stage===s}" data-s="${s}">${s}</button>`).join('')+`<span class="upd">Updated ${hm(D.updated)} · ${D.snapshots} readings · refreshes every minute</span>`+(Object.entries(D.health||{}).filter(([k,v])=>v===false).map(([k])=>k.replace('_',' ')).join(', ')?`<span class="warn">⚠ Not working right now: ${Object.entries(D.health).filter(([k,v])=>v===false).map(([k])=>k.replace('_',' ')).join(', ')}. Scores use the remaining sources.</span>`:'');
  const rows=D.topics.filter(r=>stage==='All'||r.stage===stage);
  if(!rows.find(r=>r.name===sel)&&rows.length)sel=rows[0].name;
- document.getElementById('list').innerHTML=rows.length?rows.map(r=>`<button class="row" data-n="${encodeURIComponent(r.name)}" aria-current="${r.name===sel}"><span class="num">${r.score}</span><span><span class="nm">${r.name}</span><br><span class="meta">${dots(r)}${r.stage}</span></span></button>`).join(''):'<p class="msg">No topics in this stage. Pick another filter.</p>';
+ document.getElementById('list').innerHTML=rows.length?rows.map(r=>`<button class="row" data-n="${encodeURIComponent(r.name)}" aria-current="${r.name===sel}"><span class="num">${r.score}</span><span><span class="nm">${esc(r.name)}</span><br><span class="meta">${dots(r)}${r.stage} · ${r.confidence} confidence${r.origin==='discovered'?' · not on Trends yet':''}${r.is_new?' · new':''}</span></span></button>`).join(''):'<p class="msg">No topics in this stage. Pick another filter.</p>';
  const r=D.topics.find(x=>x.name===sel);
  if(!r){document.getElementById('detail').innerHTML='';return}
  let co;
@@ -78,9 +83,11 @@ function render(){
  else if(r.stage==='Watching')co='No source is rising faster than its baseline. Nothing to act on yet.';
  else if(r.sig.news>25)co='News is already covering this alongside other signals.';
  else co='News has not picked this up yet.';
- document.getElementById('detail').innerHTML=`<h2>${r.name}</h2><div class="meta">${r.stage} · score ${r.score} of 100</div>`+
+ document.getElementById('detail').innerHTML=`<h2>${esc(r.name)}</h2><div class="meta">${r.stage} · score ${r.score} of 100</div>`+
  SRC.map(s=>`<div class="lane"><div class="hd"><span style="color:${col(s.k)};font-weight:600">${s.n}</span><span class="meta">${r.onset[s.k]!=null?'rising since '+hm(r.onset_ts[s.k]):'flat'} · signal ${r.sig[s.k]}</span></div>${spark(r.series[s.k],s.k,r.onset[s.k])}</div>`).join('')+
- `<p class="callout">${co}</p><ul class="hl">${r.headlines.map(h=>`<li>${h}</li>`).join('')}</ul>`}
+ `<p class="callout">${co}</p><h3 class="sec">Why it’s flagged</h3><ul class="why">${r.reasons.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`+
+ (r.samples.length?`<h3 class="sec">Top Bluesky posts</h3><ul class="hl">${r.samples.map(x=>`<li><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.text)}</a></li>`).join('')}</ul>`:'')+
+ (r.headlines.length?`<h3 class="sec">Headlines</h3><ul class="hl">${r.headlines.map(h=>`<li>${esc(h)}</li>`).join('')}</ul>`:'')}
 document.addEventListener('click',e=>{const c=e.target.closest('[data-s]'),w=e.target.closest('[data-n]');
  if(c){stage=c.dataset.s;render()}else if(w){sel=decodeURIComponent(w.dataset.n);render()}});
 load();setInterval(load,60000);
